@@ -112,15 +112,18 @@ def hide_titlebar_icon(win: tk.Misc) -> None:
         return
     try:
         import ctypes
-        user32 = ctypes.windll.user32
+        from ctypes import wintypes
+
         win.update_idletasks()
         hwnd = int(win.wm_frame(), 16)
-        GWL_EXSTYLE, WS_EX_DLGMODALFRAME = -20, 0x0001
-        user32.SetWindowLongW(hwnd, GWL_EXSTYLE, user32.GetWindowLongW(hwnd, GWL_EXSTYLE) | WS_EX_DLGMODALFRAME)
-        WM_SETICON, ICON_SMALL = 0x0080, 0
-        user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, 0)
-        # SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_FRAMECHANGED
-        user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0004 | 0x0020)
+
+        class WTA_OPTIONS(ctypes.Structure):
+            _fields_ = [("dwFlags", wintypes.DWORD), ("dwMask", wintypes.DWORD)]
+
+        WTA_NONCLIENT, WTNCA_NODRAWICON = 1, 0x2
+        opts = WTA_OPTIONS(WTNCA_NODRAWICON, WTNCA_NODRAWICON)
+        ctypes.windll.uxtheme.SetWindowThemeAttribute(
+            wintypes.HWND(hwnd), WTA_NONCLIENT, ctypes.byref(opts), ctypes.sizeof(opts))
     except Exception:
         pass
 
