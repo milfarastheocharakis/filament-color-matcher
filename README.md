@@ -41,8 +41,7 @@ Your ticked colors are saved automatically (`%APPDATA%\FilamentColorMatcher\sett
 On start the app downloads the sheet live, so edits to the sheet show up after **Refresh**
 (it opens a window with the sheet link prefilled, so you can paste a new one, then press **Refresh now**). If you're offline
 it uses the last downloaded copy, or the copy bundled into the exe at build time. The sheet must be
-shared as "Anyone with the link". You can also open a CSV with
-**Load CSV file…**. Expected columns: `Printable?, Modell, <color>, <color>, …`.
+shared as "Anyone with the link". Expected columns: `Printable?, Modell, <color>, <color>, …`.
 
 ## Run from source
 

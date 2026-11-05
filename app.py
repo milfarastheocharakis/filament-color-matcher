@@ -99,6 +99,19 @@ def printed_key(m: Model) -> str:
     return f"{m.category}|{m.name}"
 
 
+def center_on(win: tk.Toplevel, parent: tk.Misc) -> None:
+    """Place a dialog in the middle of the main app window."""
+    win.withdraw()
+    win.update_idletasks()
+    w, h = win.winfo_reqwidth(), win.winfo_reqheight()
+    px, py = parent.winfo_rootx(), parent.winfo_rooty()
+    pw, ph = parent.winfo_width(), parent.winfo_height()
+    x = max(0, px + (pw - w) // 2)
+    y = max(0, py + (ph - h) // 2)
+    win.geometry(f"+{x}+{y}")
+    win.deiconify()
+
+
 class DesignDialog(tk.Toplevel):
     """Add or edit one of the user's own designs."""
 
@@ -156,6 +169,7 @@ class DesignDialog(tk.Toplevel):
             self.add_row(c)
         for _ in range(max(0, 4 - len(colors))):
             self.add_row("")
+        center_on(self, app)
         self.grab_set()
 
     def add_row(self, value: str) -> None:
@@ -279,7 +293,6 @@ class App(tk.Tk):
         ttk.Button(top, text="Import .3mf…", command=self.quick_import_3mf).pack(side="left")
         self.status = ttk.Label(top, text="", foreground="#555")
         if not FRIENDS:  # the shared version has no Google Sheet / CSV, only your own designs
-            ttk.Button(top, text="Load CSV file…", command=self.load_file).pack(side="right")
             ttk.Button(top, text="Refresh", command=self.refresh_dialog).pack(side="right", padx=4)
             self.status.pack(side="right", padx=12)
 
@@ -330,7 +343,6 @@ class App(tk.Tk):
         self.cat_box = ttk.Combobox(frow, textvariable=self.cat_filter, state="readonly", width=22)
         self.cat_box.pack(side="left", padx=4)
         self.cat_box.bind("<<ComboboxSelected>>", lambda e: self.update_results())
-        ttk.Label(frow, text="Click ☐ = printed", foreground="#666").pack(side="right")
 
         self.nb = ttk.Notebook(right)
         self.nb.pack(fill="both", expand=True, pady=(6, 0))
@@ -685,6 +697,7 @@ class App(tk.Tk):
         ttk.Button(bf, text="Refresh now", command=run).pack(side="right", padx=6)
         win.bind("<Return>", lambda e: run())
         win.bind("<Escape>", lambda e: win.destroy())
+        center_on(win, self)
         win.grab_set()
 
     def load_file(self) -> None:
