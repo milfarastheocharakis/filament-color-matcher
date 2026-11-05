@@ -15,9 +15,11 @@ from colors import LINE_ORDER, all_names, line_of, swatch
 from edition import FRIENDS
 from matcher import (Model, all_colors, best_next_colors, group_by_missing, norm, parse_sheet,
                      substitutes)
+from backup import export_backup, import_backup
 from threemf import read_3mf
 
 APP_NAME = "Filament Color Matcher"
+APP_VERSION = "1.1"
 SHEET_ID = "1iFt5MCwUX8yB8hIwSoFZDM_vs67eL0S78uYKMnQlBxI"
 SHEET_GID = "516579939"
 DEFAULT_URL = "" if FRIENDS else f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={SHEET_GID}"
@@ -305,8 +307,10 @@ class App(tk.Tk):
         ttk.Button(top, text="+ Add my design", command=lambda: DesignDialog(self)).pack(side="left", padx=(16, 4))
         ttk.Button(top, text="Import .3mf…", command=self.quick_import_3mf).pack(side="left")
         self.status = ttk.Label(top, text="", foreground="#555")
+        ttk.Button(top, text="Load backup…", command=self.load_backup).pack(side="right")
+        ttk.Button(top, text="Save backup to Excel…", command=self.save_backup).pack(side="right", padx=4)
         if not FRIENDS:  # the shared version has no Google Sheet / CSV, only your own designs
-            ttk.Button(top, text="Refresh", command=self.refresh_dialog).pack(side="right", padx=4)
+            ttk.Button(top, text="Refresh", command=self.refresh_dialog).pack(side="right", padx=(4, 12))
             self.status.pack(side="right", padx=12)
 
         paned = ttk.PanedWindow(self, orient="horizontal")
@@ -712,6 +716,53 @@ class App(tk.Tk):
         win.bind("<Escape>", lambda e: win.destroy())
         center_on(win, self)
         win.grab_set()
+
+    def save_backup(self) -> None:
+        from datetime import date
+        path = filedialog.asksaveasfilename(
+            title="Save backup", defaultextension=".xlsx", filetypes=[("Excel workbook", "*.xlsx")],
+            initialfile=f"Filament backup {date.today().isoformat()}.xlsx")
+        if not path:
+            return
+        try:
+            export_backup(path, self.owned, self.designs, self.printed,
+                          "" if FRIENDS else to_edit_url(self.sheet_url), APP_VERSION)
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, f"Couldn't save the backup:\n{exc}")
+            return
+        messagebox.showinfo(APP_NAME, f"Backup saved:\n{path}\n\n{len(self.owned)} filaments, "
+                            f"{len(self.designs)} designs, {len(self.printed)} printed.")
+
+    def load_backup(self) -> None:
+        path = filedialog.askopenfilename(title="Load backup", filetypes=[("Excel workbook", "*.xlsx")])
+        if not path:
+            return
+        try:
+            data = import_backup(path)
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, f"Couldn't read that backup:\n{exc}")
+            return
+        if not messagebox.askyesno(APP_NAME, (
+                f"This backup has {len(data['owned'])} filaments, {len(data['designs'])} designs and "
+                f"{len(data['printed'])} printed models.\n\nReplace what's in the app now with it?")):
+            return
+        self.owned = set(data["owned"])
+        self.designs = data["designs"]
+        self.printed = set(data["printed"])
+        self.settings["owned"] = sorted(self.owned, key=str.casefold)
+        self.settings["printed"] = sorted(self.printed)
+        new_url = data.get("sheet_url")
+        url_changed = False
+        if not FRIENDS and new_url and to_csv_url(new_url) != self.sheet_url:
+            self.sheet_url = to_csv_url(new_url)
+            self.settings["sheet_url"] = self.sheet_url
+            url_changed = True
+        save_json(SETTINGS, self.settings)
+        save_json(DESIGNS, self.designs)
+        self._rebuild_models()
+        if url_changed:
+            self.refresh(quiet=True)
+        messagebox.showinfo(APP_NAME, "Backup loaded.")
 
     def load_file(self) -> None:
         path = filedialog.askopenfilename(filetypes=[("CSV files", "*.csv"), ("All files", "*.*")])

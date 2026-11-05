@@ -75,3 +75,16 @@ def test_petg_import_and_no_cross_material(tmp_path):
     # A PETG red is not offered as a swap for a missing PLA red.
     assert substitutes(Model("x", "", ["Basic Red"]), {"PETG HF Red"}) is None
     assert substitutes(Model("x", "", ["Basic Red"]), {"Matte Scarlet Red"}) == {"Basic Red": ["Matte Scarlet Red"]}
+
+
+def test_backup_roundtrip(tmp_path):
+    from backup import export_backup, import_backup
+    p = tmp_path / "b.xlsx"
+    designs = [{"name": "Fox", "category": "Milf prints", "colors": ["Basic Orange", "Matte Charcoal"]}]
+    printed = {"Milf prints|Fox", "Google Sheet|#0025 - Pikachu"}
+    export_backup(p, {"Matte Charcoal", "PETG HF Red"}, designs, printed, "https://x", "1.1")
+    data = import_backup(p)
+    assert sorted(data["owned"]) == ["Matte Charcoal", "PETG HF Red"]
+    assert data["designs"] == designs
+    assert set(data["printed"]) == printed
+    assert data["sheet_url"] == "https://x"

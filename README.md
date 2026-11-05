@@ -34,6 +34,12 @@ the name comes from the file name and the colors from the Bambu Studio project (
 plates actually use, matched to the closest Bambu color); check them and save. Double-click one of your designs
 in any tab to edit or delete it. Designs are saved in `%APPDATA%\FilamentColorMatcher\my_designs.json`.
 
+## Backup
+
+**Save backup to Excel…** writes everything (your filaments, your designs, what you've printed) into one
+`.xlsx` file you can open in Excel. Keep it somewhere safe; **Load backup…** restores it (replacing what's
+in the app). Works in both versions.
+
 Your ticked colors are saved automatically (`%APPDATA%\FilamentColorMatcher\settings.json`).
 
 ## Data
