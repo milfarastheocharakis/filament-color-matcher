@@ -39,6 +39,11 @@ def data_dir() -> Path:
     return d
 
 
+def resource(rel: str) -> Path:
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return base / rel
+
+
 def bundled_csv() -> Path:
     base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
     return base / "data.csv"
@@ -252,6 +257,12 @@ class App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title(APP_NAME)
+        self.logo_images = []
+        try:
+            self.logo_images = [tk.PhotoImage(file=str(resource(f"assets/logo_{n}.png"))) for n in (64, 32)]
+            self.iconphoto(True, *self.logo_images)  # window + taskbar icon, also used by dialogs
+        except Exception:
+            pass
         self.geometry("1240x760")
         self.minsize(960, 580)
         self.settings = load_json(SETTINGS, {})
@@ -288,6 +299,8 @@ class App(tk.Tk):
     def _build_ui(self) -> None:
         top = ttk.Frame(self, padding=(10, 8))
         top.pack(fill="x")
+        if self.logo_images:
+            ttk.Label(top, image=self.logo_images[1]).pack(side="left", padx=(0, 8))
         ttk.Label(top, text=APP_NAME, style="Big.TLabel").pack(side="left")
         ttk.Button(top, text="+ Add my design", command=lambda: DesignDialog(self)).pack(side="left", padx=(16, 4))
         ttk.Button(top, text="Import .3mf…", command=self.quick_import_3mf).pack(side="left")
@@ -484,7 +497,7 @@ class App(tk.Tk):
         for header, names in self.color_groups:
             visible = [c for c in names
                        if (not q or q in c.casefold() or q in (line_of(c) or "").casefold())
-                       and (not only or self.color_vars[c].get())]
+                       and (not only or q or self.color_vars[c].get())]
             if not visible:
                 continue
             header.pack(anchor="w", pady=(8, 2))
