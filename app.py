@@ -142,10 +142,13 @@ class DesignDialog(tk.Toplevel):
         self.name = tk.StringVar(value=(design or {}).get("name", ""))
         ttk.Entry(body, textvariable=self.name, width=40).grid(row=0, column=1, sticky="ew", pady=3)
 
-        ttk.Label(body, text="Category / tag:").grid(row=1, column=0, sticky="w", pady=3)
+        cat_label = ttk.Label(body, text="Category / tag:")
         self.category = tk.StringVar(value=(design or {}).get("category", DEFAULT_CATEGORY))
         cats = sorted({d.get("category", DEFAULT_CATEGORY) for d in app.designs} | {DEFAULT_CATEGORY})
-        ttk.Combobox(body, textvariable=self.category, values=cats).grid(row=1, column=1, sticky="ew", pady=3)
+        cat_box = ttk.Combobox(body, textvariable=self.category, values=cats)
+        if not FRIENDS:  # the shared version has no categories
+            cat_label.grid(row=1, column=0, sticky="w", pady=3)
+            cat_box.grid(row=1, column=1, sticky="ew", pady=3)
 
         hdr = ttk.Frame(body)
         hdr.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 2))
@@ -258,11 +261,13 @@ class DesignDialog(tk.Toplevel):
 class App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title(APP_NAME)
+        # Empty title bar: no text, and a transparent small icon (the taskbar keeps the big logo).
+        self.title("")
         self.logo_images = []
         try:
             self.logo_images = [tk.PhotoImage(file=str(resource(f"assets/logo_{n}.png"))) for n in (64, 32)]
-            self.iconphoto(True, *self.logo_images)  # window + taskbar icon, also used by dialogs
+            self._blank_icons = [tk.PhotoImage(width=n, height=n) for n in (16, 20, 24)]
+            self.iconphoto(True, *self.logo_images, *self._blank_icons)
         except Exception:
             pass
         self.geometry("1240x760")
@@ -355,10 +360,11 @@ class App(tk.Tk):
         self.model_search = tk.StringVar()
         self.model_search.trace_add("write", lambda *_: self.update_results())
         ttk.Entry(frow, textvariable=self.model_search, width=28).pack(side="left", padx=4)
-        ttk.Label(frow, text="Category:").pack(side="left", padx=(12, 0))
         self.cat_filter = tk.StringVar(value=ALL_CATEGORIES)
         self.cat_box = ttk.Combobox(frow, textvariable=self.cat_filter, state="readonly", width=22)
-        self.cat_box.pack(side="left", padx=4)
+        if not FRIENDS:  # the shared version has no categories
+            ttk.Label(frow, text="Category:").pack(side="left", padx=(12, 0))
+            self.cat_box.pack(side="left", padx=4)
         self.cat_box.bind("<<ComboboxSelected>>", lambda e: self.update_results())
 
         self.nb = ttk.Notebook(right)
@@ -379,6 +385,8 @@ class App(tk.Tk):
         ):
             frame = ttk.Frame(self.nb)
             tree = ttk.Treeview(frame, columns=cols, show="headings")
+            if FRIENDS:
+                tree["displaycolumns"] = [c for c in cols if c != "Category"]
             for c in cols:
                 tree.heading(c, text=c)
                 tree.column(c, width=widths.get(c, 480), stretch=c in ("Colors", "Models"),
