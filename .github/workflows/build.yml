@@ -55,7 +55,7 @@ jobs:
             dist/FilamentColorMatcher-Shared.exe
           body: |
             - **FilamentColorMatcher.exe** – with the Pokéball color sheet built in.
-            - **FilamentColorMatcher-Shared.exe** – clean version to share: no sheet, just your filaments, your own designs, .3mf import and printed tracking (you can still link any Google Sheet via Refresh).
+            - **FilamentColorMatcher-Shared.exe** – clean version to share: no sheet, just your filaments, your own designs, .3mf import and printed tracking.
 
             Double-click to run. No install needed.
             Windows SmartScreen may warn because the app isn't signed: click "More info" → "Run anyway".

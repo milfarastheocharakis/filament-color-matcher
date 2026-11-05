@@ -10,8 +10,8 @@ Grab **FilamentColorMatcher.exe** from the [latest release](../../releases/lates
 
 **Sharing with friends?** Send them
 [FilamentColorMatcher-Shared.exe](https://github.com/milfarastheocharakis/filament-color-matcher/releases/latest/download/FilamentColorMatcher-Shared.exe):
-the same app without the Pokéball sheet built in. They add their own designs (by hand or from .3mf) and can link
-their own Google Sheet with **Refresh**. It keeps its data separately (`%APPDATA%\FilamentColorMatcherShared`).
+the same app without the Pokéball sheet built in. They add their own designs (by hand or from .3mf); there's no
+Google Sheet or CSV loading in that version. It keeps its data separately (`%APPDATA%\FilamentColorMatcherShared`).
 (Windows SmartScreen may warn because the exe isn't signed: *More info → Run anyway*.)
 
 ## What it shows

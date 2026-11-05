@@ -274,10 +274,11 @@ class App(tk.Tk):
         ttk.Label(top, text=APP_NAME, style="Big.TLabel").pack(side="left")
         ttk.Button(top, text="+ Add my design", command=lambda: DesignDialog(self)).pack(side="left", padx=(16, 4))
         ttk.Button(top, text="Import .3mf…", command=self.quick_import_3mf).pack(side="left")
-        ttk.Button(top, text="Load CSV file…", command=self.load_file).pack(side="right")
-        ttk.Button(top, text="Refresh", command=self.refresh_dialog).pack(side="right", padx=4)
         self.status = ttk.Label(top, text="", foreground="#555")
-        self.status.pack(side="right", padx=12)
+        if not FRIENDS:  # the shared version has no Google Sheet / CSV, only your own designs
+            ttk.Button(top, text="Load CSV file…", command=self.load_file).pack(side="right")
+            ttk.Button(top, text="Refresh", command=self.refresh_dialog).pack(side="right", padx=4)
+            self.status.pack(side="right", padx=12)
 
         paned = ttk.PanedWindow(self, orient="horizontal")
         paned.pack(fill="both", expand=True, padx=10, pady=(0, 10))
@@ -582,6 +583,8 @@ class App(tk.Tk):
         self.status.config(text=f"{len(models)} sheet models · {source}")
 
     def _load_initial(self) -> None:
+        if FRIENDS:
+            return
         if not self.sheet_url:
             self.status.config(text="No Google Sheet linked · click Refresh to add one")
             return
