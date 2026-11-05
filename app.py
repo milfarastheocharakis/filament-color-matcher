@@ -21,6 +21,13 @@ SHEET_ID = "1iFt5MCwUX8yB8hIwSoFZDM_vs67eL0S78uYKMnQlBxI"
 SHEET_GID = "516579939"
 DEFAULT_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={SHEET_GID}"
 DEFAULT_CATEGORY = "My designs"
+RESTORE_OWNED = [
+    "Matte Ash Gray", "Basic Bambu Green", "Basic Beige", "Basic Dark Gray", "Basic Red",
+    "Basic Sunflower Yellow", "Basic Yellow", "Matte Bone White", "Matte Caramel", "Matte Charcoal",
+    "Matte Dark Blue", "Matte Dark Chocolate", "Matte Dark Green", "Matte Desert Tan", "Matte Ice Blue",
+    "Matte Ivory White", "Matte Lilac Purple", "Matte Mandarin Orange", "Matte Marine Blue",
+    "Matte Scarlet Red", "Matte Sky Blue",
+]
 ALL_CATEGORIES = "All categories"
 
 
@@ -223,6 +230,12 @@ class App(tk.Tk):
         self.settings = load_json(SETTINGS, {})
         self.sheet_url = self.settings.get("sheet_url", DEFAULT_URL)
         self.owned: set[str] = set(self.settings.get("owned", []))
+        if not self.settings.get("restored_owned_v1"):
+            # One-time restore of the filaments the user had ticked before they were cleared by accident.
+            self.owned |= set(RESTORE_OWNED)
+            self.settings["restored_owned_v1"] = True
+            self.settings["owned"] = sorted(self.owned, key=str.casefold)
+            save_json(SETTINGS, self.settings)
         self.designs: list[dict] = load_json(DESIGNS, [])
         self.sheet_models: list[Model] = []
         self.models: list[Model] = []
@@ -272,10 +285,6 @@ class App(tk.Tk):
         self.color_search = tk.StringVar()
         self.color_search.trace_add("write", lambda *_: self._filter_colors())
         ttk.Entry(srow, textvariable=self.color_search).pack(side="left", fill="x", expand=True, padx=4)
-        brow = ttk.Frame(left)
-        brow.pack(fill="x")
-        ttk.Button(brow, text="Select all", command=lambda: self._set_all(True)).pack(side="left")
-        ttk.Button(brow, text="Clear", command=lambda: self._set_all(False)).pack(side="left", padx=4)
         self.only_owned = tk.BooleanVar(value=False)
         ttk.Checkbutton(left, text="Show only the ones I own", variable=self.only_owned,
                         command=self._filter_colors).pack(anchor="w", pady=(4, 0))
@@ -315,7 +324,9 @@ class App(tk.Tk):
         self.trees: dict[str, ttk.Treeview] = {}
         widths = {"Model": 210, "Category": 120, "Printed": 70, "Missing": 230, "Unlocks": 70,
                   "Filament to buy": 200, "Swap": 300}
+        self.tab_frames: dict[str, ttk.Frame] = {}
         for key, cols in (
+            ("all", ("Printed", "Model", "Category", "Missing", "Colors")),
             ("ready", ("Printed", "Model", "Category", "Colors")),
             ("similar", ("Printed", "Model", "Category", "Swap", "Colors")),
             ("miss1", ("Printed", "Model", "Category", "Missing", "Colors")),
@@ -323,7 +334,6 @@ class App(tk.Tk):
             ("buy", ("Filament to buy", "Unlocks", "Models")),
             ("mine", ("Printed", "Model", "Category", "Missing", "Colors")),
             ("printed", ("Printed", "Model", "Category", "Missing", "Colors")),
-            ("all", ("Printed", "Model", "Category", "Missing", "Colors")),
         ):
             frame = ttk.Frame(self.nb)
             tree = ttk.Treeview(frame, columns=cols, show="headings")
@@ -341,6 +351,9 @@ class App(tk.Tk):
             tree.bind("<Button-1>", self._on_click)
             self.nb.add(frame, text=key)
             self.trees[key] = tree
+            self.tab_frames[key] = frame
+        # "All" sits first, but the app opens on "Can print".
+        self.nb.select(self.tab_frames["ready"])
 
         self.similar_note = ttk.Label(right, foreground="#666", wraplength=820, text=(
             "“Similar colors” = models you can print if you swap a missing color for one you own from the "
@@ -349,7 +362,7 @@ class App(tk.Tk):
         self.nb.bind("<<NotebookTabChanged>>", self._on_tab)
 
     def _on_tab(self, _e=None) -> None:
-        if self.nb.index("current") == 1:
+        if self.nb.select() == str(self.tab_frames["similar"]):
             self.similar_note.pack(anchor="w", pady=(4, 0))
         else:
             self.similar_note.pack_forget()
@@ -439,12 +452,6 @@ class App(tk.Tk):
                 row.pack_forget()
         self.canvas.yview_moveto(0)
 
-    def _set_all(self, value: bool) -> None:
-        for color, var in self.color_vars.items():
-            if self.color_rows[color].winfo_ismapped() or not self.color_search.get().strip():
-                var.set(value)
-        self._on_color_toggle()
-
     def _on_color_toggle(self) -> None:
         sheet_owned = {c for c, v in self.color_vars.items() if v.get()}
         known = {norm(c) for c in self.color_vars}
@@ -511,15 +518,15 @@ class App(tk.Tk):
         fill("all", [(m, (pm(m), m.name, catlabel(m), ", ".join(x) or "-", ", ".join(m.colors)))
                      for m, x in everything])
 
-        tabs = self.nb.tabs()
-        self.nb.tab(tabs[0], text=f" ✔ Can print ({len(ready)}) ")
-        self.nb.tab(tabs[1], text=f" ≈ Similar colors ({len(similar)}) ")
-        self.nb.tab(tabs[2], text=f" Missing 1 ({len(miss1)}) ")
-        self.nb.tab(tabs[3], text=f" Missing 2 ({len(miss2)}) ")
-        self.nb.tab(tabs[4], text=f" Buy next ({len(buy)}) ")
-        self.nb.tab(tabs[5], text=f" ★ My designs ({len(mine)}) ")
-        self.nb.tab(tabs[6], text=f" ☑ Printed ({len(done)}) ")
-        self.nb.tab(tabs[7], text=f" All ({len(models)}) ")
+        t = self.tab_frames
+        self.nb.tab(t["all"], text=f" All ({len(models)}) ")
+        self.nb.tab(t["ready"], text=f" ✔ Can print ({len(ready)}) ")
+        self.nb.tab(t["similar"], text=f" ≈ Similar colors ({len(similar)}) ")
+        self.nb.tab(t["miss1"], text=f" Missing 1 ({len(miss1)}) ")
+        self.nb.tab(t["miss2"], text=f" Missing 2 ({len(miss2)}) ")
+        self.nb.tab(t["buy"], text=f" Buy next ({len(buy)}) ")
+        self.nb.tab(t["mine"], text=f" ★ My designs ({len(mine)}) ")
+        self.nb.tab(t["printed"], text=f" ☑ Printed ({len(done)}) ")
         self.owned_label.config(text=f"{len(self.owned)} selected · tick what you have on the shelf")
 
     def _design_for(self, m: Model) -> dict | None:
