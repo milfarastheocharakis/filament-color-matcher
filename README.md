@@ -7,6 +7,11 @@ you can print right now.
 ## Download
 
 Grab **FilamentColorMatcher.exe** from the [latest release](../../releases/latest) and run it. No install needed.
+
+**Sharing with friends?** Send them
+[FilamentColorMatcher-Shared.exe](https://github.com/milfarastheocharakis/filament-color-matcher/releases/latest/download/FilamentColorMatcher-Shared.exe):
+the same app without the Pokéball sheet built in. They add their own designs (by hand or from .3mf) and can link
+their own Google Sheet with **Refresh**. It keeps its data separately (`%APPDATA%\FilamentColorMatcherShared`).
 (Windows SmartScreen may warn because the exe isn't signed: *More info → Run anyway*.)
 
 ## What it shows
@@ -33,9 +38,10 @@ Your ticked colors are saved automatically (`%APPDATA%\FilamentColorMatcher\sett
 
 ## Data
 
-On start the app downloads the sheet live, so edits to the sheet show up after **Refresh**. If you're offline
-it uses the last downloaded copy, or the copy bundled into the exe at build time. You can point it at
-another sheet with **Sheet link…** (must be shared as "Anyone with the link"), or open a CSV with
+On start the app downloads the sheet live, so edits to the sheet show up after **Refresh**
+(it opens a window with the sheet link prefilled, so you can paste a new one, then press **Refresh now**). If you're offline
+it uses the last downloaded copy, or the copy bundled into the exe at build time. The sheet must be
+shared as "Anyone with the link". You can also open a CSV with
 **Load CSV file…**. Expected columns: `Printable?, Modell, <color>, <color>, …`.
 
 ## Run from source

@@ -33,10 +33,16 @@ jobs:
       - name: Build exe
         run: pyinstaller --noconfirm --onefile --windowed --name FilamentColorMatcher --add-data "data.csv;." app.py
 
+      - name: Build shareable exe (no Pokémon sheet built in)
+        shell: pwsh
+        run: |
+          Set-Content -Path edition.py -Value "FRIENDS = True"
+          pyinstaller --noconfirm --onefile --windowed --name FilamentColorMatcher-Shared app.py
+
       - uses: actions/upload-artifact@v4
         with:
           name: FilamentColorMatcher
-          path: dist/FilamentColorMatcher.exe
+          path: dist/*.exe
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
@@ -44,7 +50,12 @@ jobs:
           tag_name: v1.0.${{ github.run_number }}
           name: Filament Color Matcher v1.0.${{ github.run_number }}
           make_latest: true
-          files: dist/FilamentColorMatcher.exe
+          files: |
+            dist/FilamentColorMatcher.exe
+            dist/FilamentColorMatcher-Shared.exe
           body: |
-            Download **FilamentColorMatcher.exe** below and double-click it. No install needed.
+            - **FilamentColorMatcher.exe** – with the Pokéball color sheet built in.
+            - **FilamentColorMatcher-Shared.exe** – clean version to share: no sheet, just your filaments, your own designs, .3mf import and printed tracking (you can still link any Google Sheet via Refresh).
+
+            Double-click to run. No install needed.
             Windows SmartScreen may warn because the app isn't signed: click "More info" → "Run anyway".

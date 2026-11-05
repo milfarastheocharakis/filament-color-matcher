@@ -12,6 +12,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from colors import all_names, swatch
+from edition import FRIENDS
 from matcher import (Model, all_colors, best_next_colors, group_by_missing, norm, parse_sheet,
                      substitutes)
 from threemf import read_3mf
@@ -19,7 +20,7 @@ from threemf import read_3mf
 APP_NAME = "Filament Color Matcher"
 SHEET_ID = "1iFt5MCwUX8yB8hIwSoFZDM_vs67eL0S78uYKMnQlBxI"
 SHEET_GID = "516579939"
-DEFAULT_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={SHEET_GID}"
+DEFAULT_URL = "" if FRIENDS else f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={SHEET_GID}"
 DEFAULT_CATEGORY = "My designs"
 RESTORE_OWNED = [
     "Matte Ash Gray", "Basic Bambu Green", "Basic Beige", "Basic Dark Gray", "Basic Red",
@@ -33,7 +34,7 @@ ALL_CATEGORIES = "All categories"
 
 def data_dir() -> Path:
     base = os.environ.get("APPDATA") or str(Path.home() / ".config")
-    d = Path(base) / "FilamentColorMatcher"
+    d = Path(base) / ("FilamentColorMatcherShared" if FRIENDS else "FilamentColorMatcher")
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -69,6 +70,15 @@ def fetch_sheet(url: str) -> str:
     if not parse_sheet(text):
         raise ValueError("The sheet came back empty or not as CSV (is it shared publicly?)")
     return text
+
+
+def to_edit_url(url: str) -> str:
+    """Show the normal (browser) link for a CSV export link."""
+    m = re.search(r"/spreadsheets/d/([A-Za-z0-9_-]+)/export", url or "")
+    if not m:
+        return url or ""
+    g = re.search(r"gid=(\d+)", url)
+    return f"https://docs.google.com/spreadsheets/d/{m.group(1)}/edit" + (f"#gid={g.group(1)}" if g else "")
 
 
 def to_csv_url(link: str) -> str:
@@ -230,7 +240,7 @@ class App(tk.Tk):
         self.settings = load_json(SETTINGS, {})
         self.sheet_url = self.settings.get("sheet_url", DEFAULT_URL)
         self.owned: set[str] = set(self.settings.get("owned", []))
-        if not self.settings.get("restored_owned_v1"):
+        if not FRIENDS and not self.settings.get("restored_owned_v1"):
             # One-time restore of the filaments the user had ticked before they were cleared by accident.
             self.owned |= set(RESTORE_OWNED)
             self.settings["restored_owned_v1"] = True
@@ -265,8 +275,7 @@ class App(tk.Tk):
         ttk.Button(top, text="+ Add my design", command=lambda: DesignDialog(self)).pack(side="left", padx=(16, 4))
         ttk.Button(top, text="Import .3mf…", command=self.quick_import_3mf).pack(side="left")
         ttk.Button(top, text="Load CSV file…", command=self.load_file).pack(side="right")
-        ttk.Button(top, text="Sheet link…", command=self.change_url).pack(side="right", padx=4)
-        ttk.Button(top, text="Refresh from Google Sheet", command=self.refresh).pack(side="right")
+        ttk.Button(top, text="Refresh", command=self.refresh_dialog).pack(side="right", padx=4)
         self.status = ttk.Label(top, text="", foreground="#555")
         self.status.pack(side="right", padx=12)
 
@@ -573,7 +582,11 @@ class App(tk.Tk):
         self.status.config(text=f"{len(models)} sheet models · {source}")
 
     def _load_initial(self) -> None:
-        for path, label in ((CACHE, "last downloaded copy"), (bundled_csv(), "built-in copy")):
+        if not self.sheet_url:
+            self.status.config(text="No Google Sheet linked · click Refresh to add one")
+            return
+        sources = [(CACHE, "last downloaded copy")] + ([] if FRIENDS else [(bundled_csv(), "built-in copy")])
+        for path, label in sources:
             try:
                 if path.exists():
                     self._set_models(path.read_text(encoding="utf-8-sig"), label)
@@ -605,27 +618,53 @@ class App(tk.Tk):
 
         threading.Thread(target=work, daemon=True).start()
 
-    def change_url(self) -> None:
+    def refresh_dialog(self) -> None:
         win = tk.Toplevel(self)
-        win.title("Google Sheet link")
+        win.title("Refresh from Google Sheet")
         win.transient(self)
-        ttk.Label(win, text="Paste the Google Sheet link (the sheet must be shared as 'Anyone with the link'):",
-                  padding=10).pack(anchor="w")
-        var = tk.StringVar(value=self.sheet_url)
-        ttk.Entry(win, textvariable=var, width=90).pack(padx=10, fill="x")
+        win.resizable(True, False)
+        body = ttk.Frame(win, padding=12)
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text="Google Sheet link", font=("Segoe UI", 10, "bold")).pack(anchor="w")
+        ttk.Label(body, foreground="#666", text=(
+            "Paste a new link here if the sheet changed. It must be shared as 'Anyone with the link can view'. "
+            "Columns: Printable?, Modell, then the colors." + (" Leave it empty to use only your own designs."
+                                                                if FRIENDS else "")),
+                  wraplength=640).pack(anchor="w", pady=(2, 6))
+        var = tk.StringVar(value=to_edit_url(self.sheet_url))
+        entry = ttk.Entry(body, textvariable=var, width=95)
+        entry.pack(fill="x")
+        entry.focus_set()
+        entry.select_range(0, "end")
+        entry.icursor("end")
 
-        def ok() -> None:
-            self.sheet_url = to_csv_url(var.get().strip()) or DEFAULT_URL
-            self.settings["sheet_url"] = self.sheet_url
+        def run() -> None:
+            url = to_csv_url(var.get().strip())
+            self.sheet_url = url
+            self.settings["sheet_url"] = url
             save_json(SETTINGS, self.settings)
             win.destroy()
-            self.refresh()
+            if url:
+                self.refresh()
+            else:
+                self.sheet_models = []
+                try:
+                    CACHE.unlink()
+                except Exception:
+                    pass
+                self._rebuild_models()
+                self.status.config(text="No Google Sheet linked · click Refresh to add one")
 
-        bf = ttk.Frame(win, padding=10)
-        bf.pack(fill="x")
-        ttk.Button(bf, text="Reset to default", command=lambda: var.set(DEFAULT_URL)).pack(side="left")
+        bf = ttk.Frame(body)
+        bf.pack(fill="x", pady=(12, 0))
+        if DEFAULT_URL:
+            ttk.Button(bf, text="Reset to default link",
+                       command=lambda: var.set(to_edit_url(DEFAULT_URL))).pack(side="left")
         ttk.Button(bf, text="Cancel", command=win.destroy).pack(side="right")
-        ttk.Button(bf, text="Save & refresh", command=ok).pack(side="right", padx=4)
+        ttk.Button(bf, text="Refresh now", command=run).pack(side="right", padx=6)
+        win.bind("<Return>", lambda e: run())
+        win.bind("<Escape>", lambda e: win.destroy())
+        win.grab_set()
 
     def load_file(self) -> None:
         path = filedialog.askopenfilename(filetypes=[("CSV files", "*.csv"), ("All files", "*.*")])
