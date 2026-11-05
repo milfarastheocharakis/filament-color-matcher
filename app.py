@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import threading
 import tkinter as tk
@@ -10,13 +11,17 @@ import urllib.request
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from matcher import Model, all_colors, best_next_colors, group_by_missing, norm, parse_sheet
-from swatches import swatch
+from colors import all_names, swatch
+from matcher import (Model, all_colors, best_next_colors, group_by_missing, norm, parse_sheet,
+                     substitutes)
+from threemf import read_3mf
 
 APP_NAME = "Filament Color Matcher"
 SHEET_ID = "1iFt5MCwUX8yB8hIwSoFZDM_vs67eL0S78uYKMnQlBxI"
 SHEET_GID = "516579939"
 DEFAULT_URL = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/export?format=csv&gid={SHEET_GID}"
+DEFAULT_CATEGORY = "My designs"
+ALL_CATEGORIES = "All categories"
 
 
 def data_dir() -> Path:
@@ -33,24 +38,25 @@ def bundled_csv() -> Path:
 
 SETTINGS = data_dir() / "settings.json"
 CACHE = data_dir() / "sheet_cache.csv"
+DESIGNS = data_dir() / "my_designs.json"
 
 
-def load_settings() -> dict:
+def load_json(path: Path, default):
     try:
-        return json.loads(SETTINGS.read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
-        return {}
+        return default
 
 
-def save_settings(s: dict) -> None:
+def save_json(path: Path, data) -> None:
     try:
-        SETTINGS.write_text(json.dumps(s, indent=2, ensure_ascii=False), encoding="utf-8")
-    except Exception:
-        pass
+        path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception as exc:
+        messagebox.showerror(APP_NAME, f"Couldn't save {path.name}:\n{exc}")
 
 
 def fetch_sheet(url: str) -> str:
-    req = urllib.request.Request(url, headers={"User-Agent": "FilamentColorMatcher/1.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": "FilamentColorMatcher/1.1"})
     with urllib.request.urlopen(req, timeout=15) as r:
         text = r.read().decode("utf-8-sig")
     if not parse_sheet(text):
@@ -58,18 +64,161 @@ def fetch_sheet(url: str) -> str:
     return text
 
 
+def to_csv_url(link: str) -> str:
+    """Turn a normal Google Sheets link into its CSV export link."""
+    if not link:
+        return ""
+    if "export?format=csv" in link or "output=csv" in link:
+        return link
+    m = re.search(r"/spreadsheets/d/([A-Za-z0-9_-]+)", link)
+    if not m:
+        return link
+    g = re.search(r"gid=(\d+)", link)
+    url = f"https://docs.google.com/spreadsheets/d/{m.group(1)}/export?format=csv"
+    return url + (f"&gid={g.group(1)}" if g else "")
+
+
+class DesignDialog(tk.Toplevel):
+    """Add or edit one of the user's own designs."""
+
+    def __init__(self, app: "App", design: dict | None = None, preset: tuple[str, list[str]] | None = None):
+        super().__init__(app)
+        self.app = app
+        self.original = design
+        self.title("Edit my design" if design else "Add my design")
+        self.transient(app)
+        self.resizable(True, True)
+        self.color_names = sorted(set(all_names()) | set(all_colors(app.models)), key=str.casefold)
+
+        body = ttk.Frame(self, padding=12)
+        body.pack(fill="both", expand=True)
+        body.columnconfigure(1, weight=1)
+
+        ttk.Label(body, text="Name:").grid(row=0, column=0, sticky="w", pady=3)
+        self.name = tk.StringVar(value=(design or {}).get("name", ""))
+        ttk.Entry(body, textvariable=self.name, width=40).grid(row=0, column=1, sticky="ew", pady=3)
+
+        ttk.Label(body, text="Category / tag:").grid(row=1, column=0, sticky="w", pady=3)
+        self.category = tk.StringVar(value=(design or {}).get("category", DEFAULT_CATEGORY))
+        cats = sorted({d.get("category", DEFAULT_CATEGORY) for d in app.designs} | {DEFAULT_CATEGORY})
+        ttk.Combobox(body, textvariable=self.category, values=cats).grid(row=1, column=1, sticky="ew", pady=3)
+
+        hdr = ttk.Frame(body)
+        hdr.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(10, 2))
+        ttk.Label(hdr, text="Colors needed:", font=("Segoe UI", 10, "bold")).pack(side="left")
+        ttk.Button(hdr, text="Fill from .3mf file…", command=self.import_3mf).pack(side="right")
+        ttk.Label(body, text="Pick from the list or type any name. Empty rows are ignored.",
+                  foreground="#666").grid(row=3, column=0, columnspan=2, sticky="w")
+
+        self.rows_frame = ttk.Frame(body)
+        self.rows_frame.grid(row=4, column=0, columnspan=2, sticky="nsew", pady=4)
+        body.rowconfigure(4, weight=1)
+        self.rows: list[tuple[ttk.Frame, tk.StringVar]] = []
+        ttk.Button(body, text="+ Add color", command=lambda: self.add_row("")).grid(
+            row=5, column=0, sticky="w")
+
+        bf = ttk.Frame(body)
+        bf.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        if design:
+            ttk.Button(bf, text="Delete design", command=self.delete).pack(side="left")
+        ttk.Button(bf, text="Cancel", command=self.destroy).pack(side="right")
+        ttk.Button(bf, text="Save", command=self.save).pack(side="right", padx=6)
+
+        colors = (design or {}).get("colors", [])
+        if preset:
+            self.name.set(preset[0])
+            colors = preset[1]
+        for c in colors:
+            self.add_row(c)
+        for _ in range(max(0, 4 - len(colors))):
+            self.add_row("")
+        self.grab_set()
+
+    def add_row(self, value: str) -> None:
+        row = ttk.Frame(self.rows_frame)
+        row.pack(fill="x", pady=2)
+        var = tk.StringVar(value=value)
+        sw = tk.Canvas(row, width=18, height=18, highlightthickness=1, highlightbackground="#888")
+        rect = sw.create_rectangle(0, 0, 20, 20, fill=swatch(value) if value else "#FFFFFF", outline="")
+        sw.pack(side="left", padx=(0, 6))
+        cb = ttk.Combobox(row, textvariable=var, values=self.color_names, width=34)
+        cb.pack(side="left", fill="x", expand=True)
+        var.trace_add("write", lambda *_: sw.itemconfigure(rect, fill=swatch(var.get()) if var.get().strip() else "#FFFFFF"))
+        entry = (row, var)
+
+        def remove() -> None:
+            row.destroy()
+            self.rows.remove(entry)
+
+        ttk.Button(row, text="✕", width=3, command=remove).pack(side="left", padx=4)
+        self.rows.append(entry)
+
+    def import_3mf(self) -> None:
+        path = filedialog.askopenfilename(parent=self, filetypes=[("3MF project", "*.3mf"), ("All files", "*.*")])
+        if not path:
+            return
+        try:
+            name, colors = read_3mf(path)
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, f"Couldn't read that .3mf file:\n{exc}", parent=self)
+            return
+        if not self.name.get().strip():
+            self.name.set(name)
+        for row, _ in self.rows:
+            row.destroy()
+        self.rows.clear()
+        for c in colors:
+            self.add_row(c)
+        if not colors:
+            self.add_row("")
+            messagebox.showinfo(APP_NAME, "No filament colors found in that file. Please add them by hand.", parent=self)
+        else:
+            messagebox.showinfo(APP_NAME, f"Found {len(colors)} colors. The names are matched to the closest "
+                                "Bambu Lab color, so please check them before saving.", parent=self)
+
+    def save(self) -> None:
+        name = self.name.get().strip()
+        colors: list[str] = []
+        for _, var in self.rows:
+            c = " ".join(var.get().split())
+            if c and norm(c) not in {norm(x) for x in colors}:
+                colors.append(c)
+        if not name:
+            messagebox.showwarning(APP_NAME, "Please give the design a name.", parent=self)
+            return
+        if not colors:
+            messagebox.showwarning(APP_NAME, "Please add at least one color.", parent=self)
+            return
+        design = {"name": name, "category": self.category.get().strip() or DEFAULT_CATEGORY, "colors": colors}
+        if self.original is not None and self.original in self.app.designs:
+            self.app.designs[self.app.designs.index(self.original)] = design
+        else:
+            self.app.designs.append(design)
+        self.app.designs_changed()
+        self.destroy()
+
+    def delete(self) -> None:
+        if messagebox.askyesno(APP_NAME, f"Delete “{self.original['name']}”?", parent=self):
+            self.app.designs.remove(self.original)
+            self.app.designs_changed()
+            self.destroy()
+
+
 class App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title(APP_NAME)
-        self.geometry("1180x720")
-        self.minsize(900, 560)
-        self.settings = load_settings()
+        self.geometry("1240x760")
+        self.minsize(960, 580)
+        self.settings = load_json(SETTINGS, {})
         self.sheet_url = self.settings.get("sheet_url", DEFAULT_URL)
         self.owned: set[str] = set(self.settings.get("owned", []))
+        self.designs: list[dict] = load_json(DESIGNS, [])
+        self.sheet_models: list[Model] = []
         self.models: list[Model] = []
         self.color_vars: dict[str, tk.BooleanVar] = {}
         self.color_rows: dict[str, tk.Widget] = {}
+        self.item_design: dict[str, dict] = {}
 
         style = ttk.Style(self)
         try:
@@ -80,6 +229,7 @@ class App(tk.Tk):
         style.configure("Big.TLabel", font=("Segoe UI", 13, "bold"))
 
         self._build_ui()
+        self._rebuild_models()
         self._load_initial()
 
     # ---------- UI ----------
@@ -87,6 +237,8 @@ class App(tk.Tk):
         top = ttk.Frame(self, padding=(10, 8))
         top.pack(fill="x")
         ttk.Label(top, text=APP_NAME, style="Big.TLabel").pack(side="left")
+        ttk.Button(top, text="+ Add my design", command=lambda: DesignDialog(self)).pack(side="left", padx=(16, 4))
+        ttk.Button(top, text="Import .3mf…", command=self.quick_import_3mf).pack(side="left")
         ttk.Button(top, text="Load CSV file…", command=self.load_file).pack(side="right")
         ttk.Button(top, text="Sheet link…", command=self.change_url).pack(side="right", padx=4)
         ttk.Button(top, text="Refresh from Google Sheet", command=self.refresh).pack(side="right")
@@ -138,32 +290,54 @@ class App(tk.Tk):
         ttk.Label(frow, text="Search models:").pack(side="left")
         self.model_search = tk.StringVar()
         self.model_search.trace_add("write", lambda *_: self.update_results())
-        ttk.Entry(frow, textvariable=self.model_search, width=30).pack(side="left", padx=4)
+        ttk.Entry(frow, textvariable=self.model_search, width=28).pack(side="left", padx=4)
+        ttk.Label(frow, text="Category:").pack(side="left", padx=(12, 0))
+        self.cat_filter = tk.StringVar(value=ALL_CATEGORIES)
+        self.cat_box = ttk.Combobox(frow, textvariable=self.cat_filter, state="readonly", width=22)
+        self.cat_box.pack(side="left", padx=4)
+        self.cat_box.bind("<<ComboboxSelected>>", lambda e: self.update_results())
+        ttk.Label(frow, text="Double-click one of your designs to edit it.", foreground="#666").pack(side="right")
 
         self.nb = ttk.Notebook(right)
         self.nb.pack(fill="both", expand=True, pady=(6, 0))
         self.trees: dict[str, ttk.Treeview] = {}
+        widths = {"Model": 210, "Category": 120, "Printable?": 75, "Missing": 230, "Unlocks": 70,
+                  "Filament to buy": 200, "Swap": 300}
         for key, cols in (
-            ("ready", ("Model", "Printable?", "Colors")),
-            ("miss1", ("Model", "Printable?", "Missing", "Colors")),
-            ("miss2", ("Model", "Printable?", "Missing", "Colors")),
+            ("ready", ("Model", "Category", "Printable?", "Colors")),
+            ("similar", ("Model", "Category", "Printable?", "Swap", "Colors")),
+            ("miss1", ("Model", "Category", "Printable?", "Missing", "Colors")),
+            ("miss2", ("Model", "Category", "Printable?", "Missing", "Colors")),
             ("buy", ("Filament to buy", "Unlocks", "Models")),
-            ("all", ("Model", "Printable?", "Missing", "Colors")),
+            ("mine", ("Model", "Category", "Missing", "Colors")),
+            ("all", ("Model", "Category", "Printable?", "Missing", "Colors")),
         ):
             frame = ttk.Frame(self.nb)
             tree = ttk.Treeview(frame, columns=cols, show="headings")
             for c in cols:
                 tree.heading(c, text=c)
-                w = {"Model": 220, "Printable?": 80, "Missing": 220, "Unlocks": 70,
-                     "Filament to buy": 200}.get(c, 500)
-                tree.column(c, width=w, stretch=c in ("Colors", "Models"), anchor="w")
+                tree.column(c, width=widths.get(c, 480), stretch=c in ("Colors", "Models"), anchor="w")
             ysb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
             tree.configure(yscrollcommand=ysb.set)
             tree.pack(side="left", fill="both", expand=True)
             ysb.pack(side="right", fill="y")
             tree.tag_configure("odd", background="#F5F7FA")
+            tree.tag_configure("mine", foreground="#1A5FB4")
+            tree.bind("<Double-1>", self._on_double_click)
             self.nb.add(frame, text=key)
             self.trees[key] = tree
+
+        self.similar_note = ttk.Label(right, foreground="#666", wraplength=820, text=(
+            "“Similar colors” = models you can print if you swap a missing color for one you own from the "
+            "same color family (e.g. Basic Orange → Matte Mandarin Orange)."))
+
+        self.nb.bind("<<NotebookTabChanged>>", self._on_tab)
+
+    def _on_tab(self, _e=None) -> None:
+        if self.nb.index("current") == 1:
+            self.similar_note.pack(anchor="w", pady=(4, 0))
+        else:
+            self.similar_note.pack_forget()
 
     def _on_wheel(self, e) -> None:
         self._scroll_widget(e, int(-e.delta / 120) or (-1 if e.delta > 0 else 1))
@@ -177,7 +351,16 @@ class App(tk.Tk):
             if isinstance(w, ttk.Treeview):
                 w.yview_scroll(units, "units")
                 return
+            if isinstance(w, tk.Toplevel):
+                return
             w = w.master
+
+    def _on_double_click(self, e) -> None:
+        tree = e.widget
+        item = tree.identify_row(e.y)
+        design = self.item_design.get(f"{id(tree)}:{item}")
+        if design is not None:
+            DesignDialog(self, design)
 
     def _build_color_list(self) -> None:
         for child in self.color_frame.winfo_children():
@@ -185,6 +368,12 @@ class App(tk.Tk):
         self.color_vars.clear()
         self.color_rows.clear()
         counts = all_colors(self.models)
+        known = {norm(c) for c in counts}
+        # Also list every Bambu color (even unused) so similar-color swaps can use them.
+        for name in all_names():
+            if norm(name) not in known:
+                counts[name] = 0
+                known.add(norm(name))
         owned_n = {norm(c) for c in self.owned}
         for color in sorted(counts, key=str.casefold):
             row = ttk.Frame(self.color_frame)
@@ -218,12 +407,11 @@ class App(tk.Tk):
 
     def _on_color_toggle(self) -> None:
         sheet_owned = {c for c, v in self.color_vars.items() if v.get()}
-        # Keep colors the user owns that aren't in the current sheet.
         known = {norm(c) for c in self.color_vars}
         extra = {c for c in self.owned if norm(c) not in known}
         self.owned = sheet_owned | extra
         self.settings["owned"] = sorted(self.owned, key=str.casefold)
-        save_settings(self.settings)
+        save_json(SETTINGS, self.settings)
         if self.only_owned.get():
             self._filter_colors()
         self.update_results()
@@ -231,45 +419,100 @@ class App(tk.Tk):
     # ---------- results ----------
     def update_results(self) -> None:
         q = self.model_search.get().strip().casefold()
-        models = [m for m in self.models if not q or q in m.name.casefold()]
+        cat = self.cat_filter.get()
+        models = [m for m in self.models
+                  if (not q or q in m.name.casefold()) and (cat == ALL_CATEGORIES or m.category == cat)]
         groups = group_by_missing(models, self.owned)
         ready = groups.get(0, [])
         miss1 = groups.get(1, [])
         miss2 = groups.get(2, [])
+        similar = []
+        for m in models:
+            subs = substitutes(m, self.owned)
+            if subs:
+                swap = "; ".join(f"{k} → {' / '.join(v[:3])}" for k, v in subs.items())
+                similar.append((m, swap))
+        similar.sort(key=lambda t: (len(t[1].split(";")), t[0].name.casefold()))
+        self.item_design.clear()
+
+        def catlabel(m: Model) -> str:
+            return f"★ {m.category}" if m.custom else m.category
 
         def fill(key: str, rows) -> None:
             tree = self.trees[key]
             tree.delete(*tree.get_children())
-            for i, values in enumerate(rows):
-                tree.insert("", "end", values=values, tags=("odd",) if i % 2 else ())
+            for i, (m, values) in enumerate(rows):
+                tags = (("odd",) if i % 2 else ()) + (("mine",) if m is not None and m.custom else ())
+                item = tree.insert("", "end", values=values, tags=tags)
+                if m is not None and m.custom:
+                    self.item_design[f"{id(tree)}:{item}"] = self._design_for(m)
 
-        fill("ready", [(m.name, m.status, ", ".join(m.colors)) for m, _ in ready])
-        fill("miss1", [(m.name, m.status, ", ".join(x), ", ".join(m.colors)) for m, x in miss1])
-        fill("miss2", [(m.name, m.status, ", ".join(x), ", ".join(m.colors)) for m, x in miss2])
+        fill("ready", [(m, (m.name, catlabel(m), m.status, ", ".join(m.colors))) for m, _ in ready])
+        fill("similar", [(m, (m.name, catlabel(m), m.status, s, ", ".join(m.colors))) for m, s in similar])
+        fill("miss1", [(m, (m.name, catlabel(m), m.status, ", ".join(x), ", ".join(m.colors))) for m, x in miss1])
+        fill("miss2", [(m, (m.name, catlabel(m), m.status, ", ".join(x), ", ".join(m.colors))) for m, x in miss2])
         buy = best_next_colors(models, self.owned)
-        fill("buy", [(c, n, ", ".join(names)) for c, n, names in buy])
+        fill("buy", [(None, (c, n, ", ".join(names))) for c, n, names in buy])
         everything = sorted(((m, x) for k in groups for m, x in groups[k]),
                             key=lambda t: (len(t[1]), t[0].name.casefold()))
-        fill("all", [(m.name, m.status, ", ".join(x) or "-", ", ".join(m.colors)) for m, x in everything])
+        mine = [(m, x) for m, x in everything if m.custom]
+        fill("mine", [(m, (m.name, catlabel(m), ", ".join(x) or "✔ can print", ", ".join(m.colors)))
+                      for m, x in mine])
+        fill("all", [(m, (m.name, catlabel(m), m.status, ", ".join(x) or "-", ", ".join(m.colors)))
+                     for m, x in everything])
 
         tabs = self.nb.tabs()
-        self.nb.tab(tabs[0], text=f"  ✔ Can print ({len(ready)})  ")
-        self.nb.tab(tabs[1], text=f"  Missing 1 color ({len(miss1)})  ")
-        self.nb.tab(tabs[2], text=f"  Missing 2 colors ({len(miss2)})  ")
-        self.nb.tab(tabs[3], text=f"  Best filament to buy next ({len(buy)})  ")
-        self.nb.tab(tabs[4], text=f"  All models ({len(models)})  ")
+        self.nb.tab(tabs[0], text=f" ✔ Can print ({len(ready)}) ")
+        self.nb.tab(tabs[1], text=f" ≈ Similar colors ({len(similar)}) ")
+        self.nb.tab(tabs[2], text=f" Missing 1 ({len(miss1)}) ")
+        self.nb.tab(tabs[3], text=f" Missing 2 ({len(miss2)}) ")
+        self.nb.tab(tabs[4], text=f" Buy next ({len(buy)}) ")
+        self.nb.tab(tabs[5], text=f" ★ My designs ({len(mine)}) ")
+        self.nb.tab(tabs[6], text=f" All ({len(models)}) ")
         self.owned_label.config(text=f"{len(self.owned)} selected · tick what you have on the shelf")
 
-    # ---------- data loading ----------
+    def _design_for(self, m: Model) -> dict | None:
+        for d in self.designs:
+            if d.get("name") == m.name and d.get("category", DEFAULT_CATEGORY) == m.category:
+                return d
+        return None
+
+    # ---------- data ----------
+    def _rebuild_models(self) -> None:
+        custom = [Model(d["name"], "", list(d.get("colors", [])), d.get("category", DEFAULT_CATEGORY), True)
+                  for d in self.designs if d.get("name") and d.get("colors")]
+        self.models = custom + self.sheet_models
+        cats = [ALL_CATEGORIES] + sorted({m.category for m in self.models}, key=str.casefold)
+        self.cat_box.configure(values=cats)
+        if self.cat_filter.get() not in cats:
+            self.cat_filter.set(ALL_CATEGORIES)
+        self._build_color_list()
+        self.update_results()
+
+    def designs_changed(self) -> None:
+        save_json(DESIGNS, self.designs)
+        self._rebuild_models()
+
+    def quick_import_3mf(self) -> None:
+        path = filedialog.askopenfilename(filetypes=[("3MF project", "*.3mf"), ("All files", "*.*")])
+        if not path:
+            return
+        try:
+            name, colors = read_3mf(path)
+        except Exception as exc:
+            messagebox.showerror(APP_NAME, f"Couldn't read that .3mf file:\n{exc}")
+            return
+        # Open the editor pre-filled so the user can check names/colors before saving.
+        DesignDialog(self, preset=(name, colors))
+
     def _set_models(self, text: str, source: str) -> None:
         models = parse_sheet(text)
         if not models:
             messagebox.showerror(APP_NAME, f"Couldn't find any models in {source}.")
             return
-        self.models = models
-        self._build_color_list()
-        self.update_results()
-        self.status.config(text=f"{len(models)} models · {source}")
+        self.sheet_models = models
+        self._rebuild_models()
+        self.status.config(text=f"{len(models)} sheet models · {source}")
 
     def _load_initial(self) -> None:
         for path, label in ((CACHE, "last downloaded copy"), (bundled_csv(), "built-in copy")):
@@ -294,11 +537,11 @@ class App(tk.Tk):
                 msg = str(exc)
 
                 def fail() -> None:
-                    if self.models:
-                        self.status.config(text=f"{len(self.models)} models · offline copy (download failed)")
+                    if self.sheet_models:
+                        self.status.config(text=f"{len(self.sheet_models)} sheet models · offline copy")
                     else:
-                        self.status.config(text="No data")
-                    if not quiet or not self.models:
+                        self.status.config(text="No sheet data")
+                    if not quiet or not self.sheet_models:
                         messagebox.showwarning(APP_NAME, f"Couldn't download the sheet:\n{msg}")
                 self.after(0, fail)
 
@@ -316,7 +559,7 @@ class App(tk.Tk):
         def ok() -> None:
             self.sheet_url = to_csv_url(var.get().strip()) or DEFAULT_URL
             self.settings["sheet_url"] = self.sheet_url
-            save_settings(self.settings)
+            save_json(SETTINGS, self.settings)
             win.destroy()
             self.refresh()
 
@@ -333,21 +576,6 @@ class App(tk.Tk):
                 self._set_models(Path(path).read_text(encoding="utf-8-sig"), Path(path).name)
             except Exception as exc:
                 messagebox.showerror(APP_NAME, str(exc))
-
-
-def to_csv_url(link: str) -> str:
-    """Turn a normal Google Sheets link into its CSV export link."""
-    import re
-    if not link:
-        return ""
-    if "export?format=csv" in link or "output=csv" in link:
-        return link
-    m = re.search(r"/spreadsheets/d/([A-Za-z0-9_-]+)", link)
-    if not m:
-        return link
-    g = re.search(r"gid=(\d+)", link)
-    url = f"https://docs.google.com/spreadsheets/d/{m.group(1)}/export?format=csv"
-    return url + (f"&gid={g.group(1)}" if g else "")
 
 
 if __name__ == "__main__":

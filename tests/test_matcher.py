@@ -23,3 +23,40 @@ def test_best_next():
     b = best_next_colors(ms, {"Matte Scarlet Red", "Matte Ivory White", "Matte Charcoal"})
     assert ("Matte Marine Blue", 1, ["Great Ball"]) in b
     assert all_colors(ms)["Matte Charcoal"] == 8
+
+
+def test_similar_colors():
+    from matcher import Model, substitutes
+    m = Model("Fox", "", ["Basic Orange", "Matte Charcoal"])
+    subs = substitutes(m, {"Matte Mandarin Orange", "Matte Charcoal"})
+    assert subs == {"Basic Orange": ["Matte Mandarin Orange"]}
+    assert substitutes(m, {"Matte Charcoal"}) is None  # no orange owned
+    assert substitutes(Model("x", "", ["Matte Charcoal"]), {"Matte Charcoal"}) is None  # nothing missing
+
+
+def test_read_3mf(tmp_path):
+    import json, zipfile
+    from threemf import read_3mf
+    p = tmp_path / "My_Cool_Fox.3mf"
+    with zipfile.ZipFile(p, "w") as z:
+        z.writestr("Metadata/project_settings.config", json.dumps({
+            "filament_colour": ["#F99963", "#000000", "#FFFFFF", "#FF6A13"],
+            "filament_settings_id": ["Bambu PLA Matte @BBL A1", "Bambu PLA Matte @BBL A1",
+                                     "Bambu PLA Matte @BBL A1", "Bambu PLA Basic @BBL A1"],
+        }))
+        z.writestr("Metadata/slice_info.config",
+                   '<config><plate><filament id="1" color="#F99963"/><filament id="2" color="#000000"/>'
+                   '<filament id="4" color="#FF6A13"/></plate></config>')
+    name, colors = read_3mf(p)
+    assert name == "My Cool Fox"
+    assert colors == ["Matte Mandarin Orange", "Matte Charcoal", "Basic Orange"]
+
+
+def test_read_3mf_unsliced(tmp_path):
+    import json, zipfile
+    from threemf import read_3mf
+    p = tmp_path / "a.3mf"
+    with zipfile.ZipFile(p, "w") as z:
+        z.writestr("Metadata/project_settings.config", json.dumps({
+            "filament_colour": ["#FFFFFF", "#000000"], "filament_settings_id": ["Bambu PLA Basic @BBL X1C"] * 2}))
+    assert read_3mf(p)[1] == ["Basic Jade White", "Basic Black"]
