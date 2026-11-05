@@ -43,6 +43,7 @@ jobs:
         shell: pwsh
         continue-on-error: true
         run: |
+          $env:FCM_DEBUG = "$PWD\fcm_debug.log"
           $p = Start-Process -FilePath dist/FilamentColorMatcher.exe -PassThru
           Start-Sleep -Seconds 12
           Add-Type -AssemblyName System.Windows.Forms, System.Drawing
@@ -52,6 +53,7 @@ jobs:
           $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
           $bmp.Save("screenshot.png")
           Stop-Process -Id $p.Id -Force
+          if (Test-Path fcm_debug.log) { Get-Content fcm_debug.log }
 
       - name: Keep the screenshot on the ci-screens branch
         shell: pwsh

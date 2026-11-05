@@ -106,26 +106,41 @@ def printed_key(m: Model) -> str:
     return f"{m.category}|{m.name}"
 
 
+def _debug(msg: str) -> None:
+    if os.environ.get("FCM_DEBUG"):
+        with open(os.environ["FCM_DEBUG"], "a", encoding="utf-8") as f:
+            f.write(msg + "\n")
+
+
 def hide_titlebar_icon(win: tk.Misc) -> None:
-    """Windows only: remove the small icon from a window's title bar (taskbar icon stays)."""
+    """Windows only: blank (transparent) icon in the title bar, real logo in the taskbar / Alt+Tab."""
     if sys.platform != "win32":
         return
     try:
         import ctypes
         from ctypes import wintypes
 
+        user32 = ctypes.windll.user32
+        user32.LoadImageW.restype = wintypes.HANDLE
+        user32.LoadImageW.argtypes = [wintypes.HINSTANCE, wintypes.LPCWSTR, wintypes.UINT,
+                                      ctypes.c_int, ctypes.c_int, wintypes.UINT]
+        user32.SendMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
         win.update_idletasks()
         hwnd = int(win.wm_frame(), 16)
-
-        class WTA_OPTIONS(ctypes.Structure):
-            _fields_ = [("dwFlags", wintypes.DWORD), ("dwMask", wintypes.DWORD)]
-
-        WTA_NONCLIENT, WTNCA_NODRAWICON = 1, 0x2
-        opts = WTA_OPTIONS(WTNCA_NODRAWICON, WTNCA_NODRAWICON)
-        ctypes.windll.uxtheme.SetWindowThemeAttribute(
-            wintypes.HWND(hwnd), WTA_NONCLIENT, ctypes.byref(opts), ctypes.sizeof(opts))
-    except Exception:
-        pass
+        IMAGE_ICON, LR_LOADFROMFILE = 1, 0x10
+        cx_small, cx_big = user32.GetSystemMetrics(49), user32.GetSystemMetrics(11)  # SM_CXSMICON, SM_CXICON
+        blank = user32.LoadImageW(None, str(resource("assets/blank.ico")), IMAGE_ICON, cx_small, cx_small,
+                                  LR_LOADFROMFILE)
+        logo = user32.LoadImageW(None, str(resource("assets/logo.ico")), IMAGE_ICON, cx_big, cx_big,
+                                 LR_LOADFROMFILE)
+        WM_SETICON = 0x0080
+        if logo:
+            user32.SendMessageW(hwnd, WM_SETICON, 1, logo)   # ICON_BIG: taskbar, Alt+Tab
+        if blank:
+            user32.SendMessageW(hwnd, WM_SETICON, 0, blank)  # ICON_SMALL: title bar
+        _debug(f"hwnd={hwnd:#x} blank={blank} logo={logo} sizes={cx_small},{cx_big}")
+    except Exception as exc:
+        _debug(f"hide_titlebar_icon failed: {exc!r}")
 
 
 def center_on(win: tk.Toplevel, parent: tk.Misc) -> None:
@@ -289,7 +304,8 @@ class App(tk.Tk):
         self.logo_images = []
         try:
             self.logo_images = [tk.PhotoImage(file=str(resource(f"assets/logo_{n}.png"))) for n in (64, 32)]
-            self.iconphoto(True, *self.logo_images)  # taskbar icon
+            if sys.platform != "win32":  # on Windows the icons are set in hide_titlebar_icon()
+                self.iconphoto(True, *self.logo_images)
         except Exception:
             pass
         self.after(50, lambda: hide_titlebar_icon(self))
