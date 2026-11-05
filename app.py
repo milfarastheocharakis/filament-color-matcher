@@ -78,6 +78,10 @@ def to_csv_url(link: str) -> str:
     return url + (f"&gid={g.group(1)}" if g else "")
 
 
+def printed_key(m: Model) -> str:
+    return f"{m.category}|{m.name}"
+
+
 class DesignDialog(tk.Toplevel):
     """Add or edit one of the user's own designs."""
 
@@ -192,6 +196,12 @@ class DesignDialog(tk.Toplevel):
         design = {"name": name, "category": self.category.get().strip() or DEFAULT_CATEGORY, "colors": colors}
         if self.original is not None and self.original in self.app.designs:
             self.app.designs[self.app.designs.index(self.original)] = design
+            old = f"{self.original.get('category', DEFAULT_CATEGORY)}|{self.original['name']}"
+            if old in self.app.printed:  # keep the Printed tick when renaming
+                self.app.printed.discard(old)
+                self.app.printed.add(f"{design['category']}|{design['name']}")
+                self.app.settings["printed"] = sorted(self.app.printed)
+                save_json(SETTINGS, self.app.settings)
         else:
             self.app.designs.append(design)
         self.app.designs_changed()
@@ -219,6 +229,8 @@ class App(tk.Tk):
         self.color_vars: dict[str, tk.BooleanVar] = {}
         self.color_rows: dict[str, tk.Widget] = {}
         self.item_design: dict[str, dict] = {}
+        self.item_model: dict[str, Model] = {}
+        self.printed: set[str] = set(self.settings.get("printed", []))
 
         style = ttk.Style(self)
         try:
@@ -296,27 +308,29 @@ class App(tk.Tk):
         self.cat_box = ttk.Combobox(frow, textvariable=self.cat_filter, state="readonly", width=22)
         self.cat_box.pack(side="left", padx=4)
         self.cat_box.bind("<<ComboboxSelected>>", lambda e: self.update_results())
-        ttk.Label(frow, text="Double-click one of your designs to edit it.", foreground="#666").pack(side="right")
+        ttk.Label(frow, text="Click ☐ = printed", foreground="#666").pack(side="right")
 
         self.nb = ttk.Notebook(right)
         self.nb.pack(fill="both", expand=True, pady=(6, 0))
         self.trees: dict[str, ttk.Treeview] = {}
-        widths = {"Model": 210, "Category": 120, "Printable?": 75, "Missing": 230, "Unlocks": 70,
+        widths = {"Model": 210, "Category": 120, "Printed": 70, "Missing": 230, "Unlocks": 70,
                   "Filament to buy": 200, "Swap": 300}
         for key, cols in (
-            ("ready", ("Model", "Category", "Printable?", "Colors")),
-            ("similar", ("Model", "Category", "Printable?", "Swap", "Colors")),
-            ("miss1", ("Model", "Category", "Printable?", "Missing", "Colors")),
-            ("miss2", ("Model", "Category", "Printable?", "Missing", "Colors")),
+            ("ready", ("Printed", "Model", "Category", "Colors")),
+            ("similar", ("Printed", "Model", "Category", "Swap", "Colors")),
+            ("miss1", ("Printed", "Model", "Category", "Missing", "Colors")),
+            ("miss2", ("Printed", "Model", "Category", "Missing", "Colors")),
             ("buy", ("Filament to buy", "Unlocks", "Models")),
-            ("mine", ("Model", "Category", "Missing", "Colors")),
-            ("all", ("Model", "Category", "Printable?", "Missing", "Colors")),
+            ("mine", ("Printed", "Model", "Category", "Missing", "Colors")),
+            ("printed", ("Printed", "Model", "Category", "Missing", "Colors")),
+            ("all", ("Printed", "Model", "Category", "Missing", "Colors")),
         ):
             frame = ttk.Frame(self.nb)
             tree = ttk.Treeview(frame, columns=cols, show="headings")
             for c in cols:
                 tree.heading(c, text=c)
-                tree.column(c, width=widths.get(c, 480), stretch=c in ("Colors", "Models"), anchor="w")
+                tree.column(c, width=widths.get(c, 480), stretch=c in ("Colors", "Models"),
+                            anchor="center" if c == "Printed" else "w")
             ysb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
             tree.configure(yscrollcommand=ysb.set)
             tree.pack(side="left", fill="both", expand=True)
@@ -324,6 +338,7 @@ class App(tk.Tk):
             tree.tag_configure("odd", background="#F5F7FA")
             tree.tag_configure("mine", foreground="#1A5FB4")
             tree.bind("<Double-1>", self._on_double_click)
+            tree.bind("<Button-1>", self._on_click)
             self.nb.add(frame, text=key)
             self.trees[key] = tree
 
@@ -355,8 +370,33 @@ class App(tk.Tk):
                 return
             w = w.master
 
+    def _on_click(self, e):
+        """Clicking the Printed cell toggles it."""
+        tree = e.widget
+        if tree.identify_region(e.x, e.y) != "cell":
+            return None
+        col = tree.identify_column(e.x)
+        if tree.heading(col, "text") != "Printed":
+            return None
+        m = self.item_model.get(f"{id(tree)}:{tree.identify_row(e.y)}")
+        if m is None:
+            return None
+        key = printed_key(m)
+        if key in self.printed:
+            self.printed.discard(key)
+        else:
+            self.printed.add(key)
+        self.settings["printed"] = sorted(self.printed)
+        save_json(SETTINGS, self.settings)
+        y = tree.yview()[0]
+        self.update_results()
+        tree.yview_moveto(y)
+        return "break"
+
     def _on_double_click(self, e) -> None:
         tree = e.widget
+        if tree.heading(tree.identify_column(e.x), "text") == "Printed":
+            return
         item = tree.identify_row(e.y)
         design = self.item_design.get(f"{id(tree)}:{item}")
         if design is not None:
@@ -434,6 +474,10 @@ class App(tk.Tk):
                 similar.append((m, swap))
         similar.sort(key=lambda t: (len(t[1].split(";")), t[0].name.casefold()))
         self.item_design.clear()
+        self.item_model.clear()
+
+        def pm(m: Model) -> str:
+            return "☑" if printed_key(m) in self.printed else "☐"
 
         def catlabel(m: Model) -> str:
             return f"★ {m.category}" if m.custom else m.category
@@ -444,21 +488,27 @@ class App(tk.Tk):
             for i, (m, values) in enumerate(rows):
                 tags = (("odd",) if i % 2 else ()) + (("mine",) if m is not None and m.custom else ())
                 item = tree.insert("", "end", values=values, tags=tags)
+                if m is not None:
+                    self.item_model[f"{id(tree)}:{item}"] = m
                 if m is not None and m.custom:
                     self.item_design[f"{id(tree)}:{item}"] = self._design_for(m)
 
-        fill("ready", [(m, (m.name, catlabel(m), m.status, ", ".join(m.colors))) for m, _ in ready])
-        fill("similar", [(m, (m.name, catlabel(m), m.status, s, ", ".join(m.colors))) for m, s in similar])
-        fill("miss1", [(m, (m.name, catlabel(m), m.status, ", ".join(x), ", ".join(m.colors))) for m, x in miss1])
-        fill("miss2", [(m, (m.name, catlabel(m), m.status, ", ".join(x), ", ".join(m.colors))) for m, x in miss2])
+        fill("ready", [(m, (pm(m), m.name, catlabel(m), ", ".join(m.colors))) for m, _ in ready])
+        fill("similar", [(m, (pm(m), m.name, catlabel(m), s, ", ".join(m.colors))) for m, s in similar])
+        fill("miss1", [(m, (pm(m), m.name, catlabel(m), ", ".join(x), ", ".join(m.colors))) for m, x in miss1])
+        fill("miss2", [(m, (pm(m), m.name, catlabel(m), ", ".join(x), ", ".join(m.colors))) for m, x in miss2])
         buy = best_next_colors(models, self.owned)
         fill("buy", [(None, (c, n, ", ".join(names))) for c, n, names in buy])
         everything = sorted(((m, x) for k in groups for m, x in groups[k]),
                             key=lambda t: (len(t[1]), t[0].name.casefold()))
         mine = [(m, x) for m, x in everything if m.custom]
-        fill("mine", [(m, (m.name, catlabel(m), ", ".join(x) or "✔ can print", ", ".join(m.colors)))
+        fill("mine", [(m, (pm(m), m.name, catlabel(m), ", ".join(x) or "-", ", ".join(m.colors)))
                       for m, x in mine])
-        fill("all", [(m, (m.name, catlabel(m), m.status, ", ".join(x) or "-", ", ".join(m.colors)))
+        done = sorted(((m, x) for m, x in everything if printed_key(m) in self.printed),
+                      key=lambda t: t[0].name.casefold())
+        fill("printed", [(m, (pm(m), m.name, catlabel(m), ", ".join(x) or "-", ", ".join(m.colors)))
+                         for m, x in done])
+        fill("all", [(m, (pm(m), m.name, catlabel(m), ", ".join(x) or "-", ", ".join(m.colors)))
                      for m, x in everything])
 
         tabs = self.nb.tabs()
@@ -468,7 +518,8 @@ class App(tk.Tk):
         self.nb.tab(tabs[3], text=f" Missing 2 ({len(miss2)}) ")
         self.nb.tab(tabs[4], text=f" Buy next ({len(buy)}) ")
         self.nb.tab(tabs[5], text=f" ★ My designs ({len(mine)}) ")
-        self.nb.tab(tabs[6], text=f" All ({len(models)}) ")
+        self.nb.tab(tabs[6], text=f" ☑ Printed ({len(done)}) ")
+        self.nb.tab(tabs[7], text=f" All ({len(models)}) ")
         self.owned_label.config(text=f"{len(self.owned)} selected · tick what you have on the shelf")
 
     def _design_for(self, m: Model) -> dict | None:

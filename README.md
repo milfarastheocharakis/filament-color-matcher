@@ -15,6 +15,8 @@ Grab **FilamentColorMatcher.exe** from the [latest release](../../releases/lates
 - **Missing 1 color / Missing 2 colors** – near misses, with the exact colors you're missing.
 - **≈ Similar colors** – models you could print by swapping a missing color for one you own from the
   same color family (e.g. Basic Orange → Matte Mandarin Orange). The *Swap* column says what to use.
+- **☑ Printed** – everything you've marked as printed. Click the ☐ in the *Printed* column of any tab to
+  tick a model as printed (click again to untick).
 - **★ My designs** – your own designs, with your own category tag.
 - **Best filament to buy next** – which single spool would unlock the most new models.
 - **All models** – everything, sorted by how close you are.
