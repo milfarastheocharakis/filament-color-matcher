@@ -106,6 +106,25 @@ def printed_key(m: Model) -> str:
     return f"{m.category}|{m.name}"
 
 
+def hide_titlebar_icon(win: tk.Misc) -> None:
+    """Windows only: remove the small icon from a window's title bar (taskbar icon stays)."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        win.update_idletasks()
+        hwnd = int(win.wm_frame(), 16)
+        GWL_EXSTYLE, WS_EX_DLGMODALFRAME = -20, 0x0001
+        user32.SetWindowLongW(hwnd, GWL_EXSTYLE, user32.GetWindowLongW(hwnd, GWL_EXSTYLE) | WS_EX_DLGMODALFRAME)
+        WM_SETICON, ICON_SMALL = 0x0080, 0
+        user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, 0)
+        # SWP_NOSIZE | SWP_NOMOVE | SWP_NOZORDER | SWP_FRAMECHANGED
+        user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0004 | 0x0020)
+    except Exception:
+        pass
+
+
 def center_on(win: tk.Toplevel, parent: tk.Misc) -> None:
     """Place a dialog in the middle of the main app window."""
     win.withdraw()
@@ -117,6 +136,7 @@ def center_on(win: tk.Toplevel, parent: tk.Misc) -> None:
     y = max(0, py + (ph - h) // 2)
     win.geometry(f"+{x}+{y}")
     win.deiconify()
+    hide_titlebar_icon(win)
 
 
 class DesignDialog(tk.Toplevel):
@@ -266,10 +286,10 @@ class App(tk.Tk):
         self.logo_images = []
         try:
             self.logo_images = [tk.PhotoImage(file=str(resource(f"assets/logo_{n}.png"))) for n in (64, 32)]
-            self._blank_icons = [tk.PhotoImage(width=n, height=n) for n in (16, 20, 24)]
-            self.iconphoto(True, *self.logo_images, *self._blank_icons)
+            self.iconphoto(True, *self.logo_images)  # taskbar icon
         except Exception:
             pass
+        self.after(50, lambda: hide_titlebar_icon(self))
         self.geometry("1240x760")
         self.minsize(960, 580)
         self.settings = load_json(SETTINGS, {})
