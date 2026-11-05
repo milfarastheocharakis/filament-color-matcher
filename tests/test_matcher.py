@@ -60,3 +60,18 @@ def test_read_3mf_unsliced(tmp_path):
         z.writestr("Metadata/project_settings.config", json.dumps({
             "filament_colour": ["#FFFFFF", "#000000"], "filament_settings_id": ["Bambu PLA Basic @BBL X1C"] * 2}))
     assert read_3mf(p)[1] == ["Basic Jade White", "Basic Black"]
+
+
+def test_petg_import_and_no_cross_material(tmp_path):
+    import json, zipfile
+    from threemf import read_3mf
+    from matcher import Model, substitutes
+    p = tmp_path / "b.3mf"
+    with zipfile.ZipFile(p, "w") as z:
+        z.writestr("Metadata/project_settings.config", json.dumps({
+            "filament_colour": ["#EB3A3A", "#F2F2F2"],
+            "filament_settings_id": ["Bambu PETG HF @BBL X1C", "Bambu PLA Silk+ @BBL X1C"]}))
+    assert read_3mf(p)[1] == ["PETG HF Red", "Silk+ White"]
+    # A PETG red is not offered as a swap for a missing PLA red.
+    assert substitutes(Model("x", "", ["Basic Red"]), {"PETG HF Red"}) is None
+    assert substitutes(Model("x", "", ["Basic Red"]), {"Matte Scarlet Red"}) == {"Basic Red": ["Matte Scarlet Red"]}

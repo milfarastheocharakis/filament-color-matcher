@@ -11,7 +11,7 @@ import urllib.request
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from colors import all_names, swatch
+from colors import LINE_ORDER, all_names, line_of, swatch
 from edition import FRIENDS
 from matcher import (Model, all_colors, best_next_colors, group_by_missing, norm, parse_sheet,
                      substitutes)
@@ -109,7 +109,10 @@ class DesignDialog(tk.Toplevel):
         self.title("Edit my design" if design else "Add my design")
         self.transient(app)
         self.resizable(True, True)
-        self.color_names = sorted(set(all_names()) | set(all_colors(app.models)), key=str.casefold)
+        catalog = all_names()
+        known = {norm(c) for c in catalog}
+        self.color_names = catalog + sorted((c for c in all_colors(app.models) if norm(c) not in known),
+                                            key=str.casefold)
 
         body = ttk.Frame(self, padding=12)
         body.pack(fill="both", expand=True)
@@ -430,36 +433,51 @@ class App(tk.Tk):
             child.destroy()
         self.color_vars.clear()
         self.color_rows.clear()
+        self.color_groups: list[tuple[tk.Widget, list[str]]] = []
         counts = all_colors(self.models)
         known = {norm(c) for c in counts}
-        # Also list every Bambu color (even unused) so similar-color swaps can use them.
+        # List every Bambu PLA/PETG color (even unused) so you can tick everything you own.
         for name in all_names():
             if norm(name) not in known:
                 counts[name] = 0
                 known.add(norm(name))
+        groups: dict[str, list[str]] = {}
+        for color in counts:
+            groups.setdefault(line_of(color) or "Other", []).append(color)
+        order = LINE_ORDER + ["Other"]
         owned_n = {norm(c) for c in self.owned}
-        for color in sorted(counts, key=str.casefold):
-            row = ttk.Frame(self.color_frame)
-            sw = tk.Canvas(row, width=16, height=16, highlightthickness=1, highlightbackground="#888")
-            sw.create_rectangle(0, 0, 18, 18, fill=swatch(color), outline="")
-            sw.pack(side="left", padx=(0, 6))
-            var = tk.BooleanVar(value=norm(color) in owned_n)
-            cb = ttk.Checkbutton(row, text=f"{color}  ({counts[color]})", variable=var,
-                                 command=self._on_color_toggle)
-            cb.pack(side="left")
-            self.color_vars[color] = var
-            self.color_rows[color] = row
+        for line in sorted(groups, key=lambda g: order.index(g) if g in order else len(order)):
+            header = ttk.Label(self.color_frame, text=line, font=("Segoe UI", 10, "bold"))
+            names = groups[line] if line == "Other" else [n for n in all_names() if n in groups[line]]
+            if line == "Other":
+                names = sorted(names, key=str.casefold)
+            for color in names:
+                row = ttk.Frame(self.color_frame)
+                sw = tk.Canvas(row, width=16, height=16, highlightthickness=1, highlightbackground="#888")
+                sw.create_rectangle(0, 0, 18, 18, fill=swatch(color), outline="")
+                sw.pack(side="left", padx=(8, 6))
+                var = tk.BooleanVar(value=norm(color) in owned_n)
+                label = f"{color}  ({counts[color]})" if counts[color] else color
+                ttk.Checkbutton(row, text=label, variable=var, command=self._on_color_toggle).pack(side="left")
+                self.color_vars[color] = var
+                self.color_rows[color] = row
+            self.color_groups.append((header, names))
         self._filter_colors()
 
     def _filter_colors(self) -> None:
         q = self.color_search.get().strip().casefold()
         only = self.only_owned.get()
-        for color, row in self.color_rows.items():
-            show = (not q or q in color.casefold()) and (not only or self.color_vars[color].get())
-            if show:
-                row.pack(fill="x", anchor="w", pady=1)
-            else:
-                row.pack_forget()
+        for child in self.color_frame.winfo_children():
+            child.pack_forget()
+        for header, names in self.color_groups:
+            visible = [c for c in names
+                       if (not q or q in c.casefold() or q in (line_of(c) or "").casefold())
+                       and (not only or self.color_vars[c].get())]
+            if not visible:
+                continue
+            header.pack(anchor="w", pady=(8, 2))
+            for c in visible:
+                self.color_rows[c].pack(fill="x", anchor="w", pady=1)
         self.canvas.yview_moveto(0)
 
     def _on_color_toggle(self) -> None:

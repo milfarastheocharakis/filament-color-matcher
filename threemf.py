@@ -9,16 +9,25 @@ from pathlib import Path
 
 from colors import canonical, nearest
 
-# Bambu filament ids -> product line
-_LINE_BY_ID = {"GFA00": "Basic", "GFA01": "Matte"}
+# Bambu filament ids -> product line (used when the preset name doesn't say)
+_LINE_BY_ID = {"GFA00": "PLA Basic", "GFA01": "PLA Matte", "GFG02": "PETG HF"}
+
+# Substrings of the filament preset name (e.g. "Bambu PLA Matte @BBL A1") -> product line. Order matters.
+_LINE_WORDS = [
+    ("petg-cf", "PETG-CF"), ("petg cf", "PETG-CF"), ("petg translucent", "PETG Translucent"),
+    ("petg", "PETG HF"), ("silk multi", "PLA Silk Multi-Color"), ("silk", "PLA Silk+"),
+    ("matte", "PLA Matte"), ("gradient", "PLA Basic Gradient"), ("metal", "PLA Metal"),
+    ("sparkle", "PLA Sparkle"), ("marble", "PLA Marble"), ("galaxy", "PLA Galaxy"), ("glow", "PLA Glow"),
+    ("translucent", "PLA Translucent"), ("wood", "PLA Wood"), ("pla-cf", "PLA-CF"), ("pla cf", "PLA-CF"),
+    ("tough", "PLA Tough+"), ("basic", "PLA Basic"),
+]
 
 
 def _line(settings_id: str, fil_id: str) -> str | None:
     s = settings_id.casefold()
-    if "matte" in s:
-        return "Matte"
-    if "basic" in s:
-        return "Basic"
+    for word, line in _LINE_WORDS:
+        if word in s:
+            return line
     return _LINE_BY_ID.get(fil_id)
 
 

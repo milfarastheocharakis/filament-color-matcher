@@ -29,7 +29,7 @@ Google Sheet or CSV loading in that version. It keeps its data separately (`%APP
 ## Adding your own designs
 
 Click **+ Add my design**: type a name, pick a category/tag (e.g. "My designs"), and choose the colors from the
-full Bambu Lab PLA Basic + Matte list (or type any name). Or click **Import .3mf…** / **Fill from .3mf file…**:
+full Bambu Lab PLA + PETG list (or type any name). Or click **Import .3mf…** / **Fill from .3mf file…**:
 the name comes from the file name and the colors from the Bambu Studio project (the filaments the sliced
 plates actually use, matched to the closest Bambu color); check them and save. Double-click one of your designs
 in any tab to edit or delete it. Designs are saved in `%APPDATA%\FilamentColorMatcher\my_designs.json`.

@@ -6,7 +6,7 @@ import io
 from collections import Counter
 from dataclasses import dataclass, field
 
-from colors import family
+from colors import family, line_of
 
 
 @dataclass
@@ -92,6 +92,14 @@ def best_next_colors(models: list[Model], owned: set[str]) -> list[tuple[str, in
     return sorted(((c, len(n), n) for c, n in unlocks.items()), key=lambda t: (-t[1], t[0]))
 
 
+def material(color: str) -> str | None:
+    """"PLA" or "PETG" for known Bambu colors, None if unknown."""
+    line = line_of(color)
+    if not line:
+        return None
+    return "PETG" if line.startswith("PETG") else "PLA"
+
+
 def substitutes(model: Model, owned: set[str]) -> dict[str, list[str]] | None:
     """If every missing color can be swapped for an owned color of the same family
     (e.g. Basic Orange -> Matte Mandarin Orange), return {missing: [owned options]}.
@@ -105,7 +113,9 @@ def substitutes(model: Model, owned: set[str]) -> dict[str, list[str]] | None:
         fam = family(m)
         if fam is None or fam == "multicolor":
             return None
-        opts = sorted((o for o in owned if family(o) == fam), key=str.casefold)
+        mat = material(m)
+        opts = sorted((o for o in owned if family(o) == fam and material(o) in (mat, None)
+                       or (family(o) == fam and mat is None)), key=str.casefold)
         # Prefer substitutes the model doesn't already use elsewhere (keeps colors distinct).
         opts.sort(key=lambda o: norm(o) in used)
         if not opts:
