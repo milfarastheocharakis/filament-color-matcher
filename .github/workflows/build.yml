@@ -53,10 +53,19 @@ jobs:
           $bmp.Save("screenshot.png")
           Stop-Process -Id $p.Id -Force
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: screenshot
-          path: screenshot.png
+      - name: Keep the screenshot on the ci-screens branch
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          Copy-Item screenshot.png $env:RUNNER_TEMP/screenshot.png
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git checkout --orphan ci-screens
+          git rm -rf --cached . | Out-Null
+          Copy-Item $env:RUNNER_TEMP/screenshot.png screenshot.png
+          git add screenshot.png
+          git commit -m "CI screenshot"
+          git push -f origin ci-screens
 
       - uses: actions/upload-artifact@v4
         with:
